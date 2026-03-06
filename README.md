@@ -158,4 +158,4 @@ This project is licensed under the **GPLv3** License.
   <a href="https://github.com/SHAJON-404/iPA-Edit/issues">Issues</a> · <a href="https://shajon.dev">Contact</a>
 </p>
 
-[![Stargazers over time](https://starchart.cc/SHAJON-404/iPA-Edit.svg?variant=adaptive)](https://starchart.cc/SHAJON-404/iPA-Edit)
+[![Stargazers over time](https://starchart.cc/SHAJON-404/iPA-Edit.svg?background=%231e1e1e&axis=%23f9f9f9&line=%236b63ff)](https://starchart.cc/SHAJON-404/iPA-Edit)
