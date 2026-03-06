@@ -521,7 +521,7 @@ class IPAEditor:
             print(f"[+] removed {removed} dylib reference(s) from binary")
 
     def _resolve_zsign(self) -> str:
-        platform_map = {"Windows": "windows/zsign.exe", "Darwin": "mac/zsign", "Linux": "ubuntu/zsign"}
+        platform_map = {"Windows": "windows/zsign.exe", "Darwin": "mac/zsign", "Linux": "linux/zsign"}
         local = os.path.join(self.script_dir, "zsign", platform_map.get(platform.system(), ""))
         if os.path.isfile(local):
             print(f"[*] zsign: {local}")
@@ -654,8 +654,11 @@ def build_parser() -> argparse.ArgumentParser:
 
 
 def interactive_mode() -> argparse.Namespace:
+    os.system("cls" if os.name == "nt" else "clear")
     print(SEP)
     print("[*] iPA Edit – Interactive Mode")
+    print("[*] Author: S. SHAJON")
+    print("[*] GitHub: https://github.com/SHAJON-404/iPA-Edit.git")
     print(SEP)
     print("  1: Edit iPA (bundle ID, name, version, icon, file browser)")
     print("  2: Export dylibs from iPA")
@@ -668,6 +671,7 @@ def interactive_mode() -> argparse.Namespace:
     print(SEP)
 
     choice = input("[?] select option (1-8): ").strip()
+    print(SEP)
     if choice == "8":
         sys.exit("[*] bye")
 
@@ -751,6 +755,6 @@ if __name__ == "__main__":
                 sys.exit("[-] -i and -o are required when using command-line arguments.")
         IPAEditor(ns).run()
     except KeyboardInterrupt:
-        print("[*] interrupted, exiting.")
+        print("\n[*] interrupted, exiting.")
         sys.exit(0)
 
