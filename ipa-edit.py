@@ -21,11 +21,11 @@ About:
     Original Author: https://github.com/binnichtaktiv
 '''
 
-import atexit
 import io
 import os
 import sys
 import time
+import atexit
 import struct
 import shutil
 import tarfile
@@ -360,6 +360,7 @@ class IPAEditor:
         for i, f in enumerate(dylibs, 1):
             print(f"  {i}: {os.path.basename(f)}")
 
+        print(SEP)
         selection = input("[?] File numbers to DELETE (comma separated) or 'exit': ").strip().lower()
         if selection == "exit":
             print(f"{WHITE}[*] Cancelled{RESET}")
@@ -599,7 +600,7 @@ class IPAEditor:
 
         app_folder = next((f for f in os.listdir(apps_dir) if f.endswith(".app")), None)
         if app_folder is None:
-            sys.exit("[-] .app not found. Check: https://github.com/binnichtaktiv/iPA-Edit/issues")
+            sys.exit("[-] .app not found. Check: https://github.com/SHAJON-404/iPA-Edit/issues")
 
         print(f"{GREEN}[+] Found: {app_folder}{RESET}")
         src = os.path.join(apps_dir, app_folder)
