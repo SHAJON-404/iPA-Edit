@@ -48,7 +48,7 @@ iPA-Edit/
 ### Installation
 
 ```bash
-git clone https://github.com/SHAJON-404/iPA-Edit.git
+git clone --depth=1 https://github.com/SHAJON-404/iPA-Edit.git
 cd iPA-Edit
 pip install -r requirements.txt
 ```
