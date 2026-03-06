@@ -10,7 +10,7 @@ About:
         - Convert .deb files to .ipa files
         - Convert .ipa files to .deb files
 
-    Usage: python ipaedit.py -i <input_ipa> -o <output_ipa>
+    Usage: python ipa-edit.py -i <input_ipa> -o <output_ipa>
     
     Author [Remake]: SHAJON-404
     GitHub: https://github.com/SHAJON-404

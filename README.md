@@ -25,7 +25,7 @@
 
 ```
 iPA-Edit/
-├── ipaedit.py              # main script
+├── ipa-edit.py              # main script
 ├── requirements.txt
 ├── certificate/            # place signing certificates here
 │   ├── *.p12
@@ -73,7 +73,7 @@ pip install -r requirements.txt
 Simply run with no arguments:
 
 ```bash
-python ipaedit.py
+python ipa-edit.py
 ```
 
 You'll see a menu:
@@ -92,7 +92,7 @@ You'll see a menu:
 ### Command-Line Mode
 
 ```bash
-python ipaedit.py -i <input> -o <output> [options]
+python ipa-edit.py -i <input> -o <output> [options]
 ```
 
 | Flag | Description |
@@ -114,19 +114,19 @@ python ipaedit.py -i <input> -o <output> [options]
 
 ```bash
 # Edit metadata
-python ipaedit.py -i app.ipa -o patched.ipa -b com.new.id -n "My App" -v 2.0
+python ipa-edit.py -i app.ipa -o patched.ipa -b com.new.id -n "My App" -v 2.0
 
 # Remove injected tweaks & sign
-python ipaedit.py -i app.ipa -o . -r
+python ipa-edit.py -i app.ipa -o . -r
 
 # Sign a single iPA
-python ipaedit.py -i app.ipa -o signed.ipa -s
+python ipa-edit.py -i app.ipa -o signed.ipa -s
 
 # Batch sign all iPAs in a folder
-python ipaedit.py -i ./ipas/ -o ./output/ -s
+python ipa-edit.py -i ./ipas/ -o ./output/ -s
 
 # Convert .deb to .ipa
-python ipaedit.py -i tweak.deb -o converted.ipa -e
+python ipa-edit.py -i tweak.deb -o converted.ipa -e
 ```
 
 ## 🔐 Certificate & Zsign Auto-Detection
