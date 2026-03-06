@@ -125,6 +125,15 @@ class IPAEditor:
         self.output_dir: str | None = None
         self._register_cleanup()
 
+    def _get_auto_out_path(self, suffix: str) -> str:
+        if not self.args.i:
+            return f"output_{suffix}.ipa"
+        base_name = os.path.basename(self.args.i)
+        if base_name.lower().endswith(".ipa") or base_name.lower().endswith(".deb"):
+            base_name = base_name[:-4]
+        input_dir = os.path.dirname(os.path.abspath(self.args.i))
+        return os.path.join(input_dir, f"{base_name}_{suffix}.ipa")
+
     def _register_cleanup(self) -> None:
         atexit.register(self._remove_temp)
 
@@ -228,7 +237,7 @@ class IPAEditor:
         if self.payload_path is None:
             sys.exit("[-] payload_path is not set.")
 
-        output = self.args.o
+        output = self.args.o if self.args.o else self._get_auto_out_path("unsigned")
         if output.endswith(".ipa"):
             output = output[:-4]
 
@@ -403,30 +412,27 @@ class IPAEditor:
         unsigned_ipa = temp_ipa + ".ipa"
         os.replace(temp_ipa_file, unsigned_ipa)
 
-        unsigned_dir = os.path.join(self.script_dir, "Unsigned")
-        os.makedirs(unsigned_dir, exist_ok=True)
-        ipa_name = os.path.basename(self.args.i)
-        unsigned_copy = os.path.join(unsigned_dir, ipa_name)
-        shutil.copy2(unsigned_ipa, unsigned_copy)
-        print(f"[+] unsigned saved: {unsigned_copy}")
+        ans = input("[?] sign the patched iPA? [Y/n]: ").lower().strip()
+        do_sign = ans in ("y", "yes", "")
 
-        print(SEP)
-        print("[*] signing")
-        zsign = self._resolve_zsign()
-        p12_path, mb_path = self._resolve_certificate()
-        if not p12_path or not mb_path:
-            p12_path = input("[?] .p12 path: ").strip(' "\'')
-            mb_path = input("[?] .mobileprovision path: ").strip(' "\'')
-        cert_pw = input("[?] certificate password: ")
+        if do_sign:
+            print(SEP)
+            print("[*] signing")
+            zsign = self._resolve_zsign()
+            p12_path, mb_path = self._resolve_certificate()
+            if not p12_path or not mb_path:
+                p12_path = input("[?] .p12 path: ").strip(' "\'')
+                mb_path = input("[?] .mobileprovision path: ").strip(' "\'')
+            cert_pw = input("[?] certificate password: ")
 
-        signed_dir = os.path.join(self.script_dir, "Signed")
-        os.makedirs(signed_dir, exist_ok=True)
-
-        ipa_name = os.path.basename(self.args.i)
-        signed_ipa = os.path.join(signed_dir, ipa_name)
-        cmd = f'"{zsign}" -k "{p12_path}" -m "{mb_path}" -p "{cert_pw}" -o "{signed_ipa}" -z 9 "{unsigned_ipa}"'
-        subprocess.run(cmd, shell=True)
-        print(f"[+] signed: {signed_ipa}")
+            signed_final = self.args.o if self.args.o else self._get_auto_out_path("signed")
+            cmd = f'"{zsign}" -k "{p12_path}" -m "{mb_path}" -p "{cert_pw}" -o "{signed_final}" -z 9 "{unsigned_ipa}"'
+            subprocess.run(cmd, shell=True)
+            print(f"[+] signed: {signed_final}")
+        else:
+            unsigned_final = self.args.o if self.args.o else self._get_auto_out_path("unsigned")
+            shutil.copy2(unsigned_ipa, unsigned_final)
+            print(f"[+] unsigned saved: {unsigned_final}")
 
     def _find_main_executable(self) -> str | None:
         if self.app_path is None:
@@ -553,7 +559,7 @@ class IPAEditor:
         p12_path, mb_path = self._resolve_certificate()
 
         if not self.args.i.endswith(".ipa"):
-            self.output_dir = os.path.join(self.args.o, "signed_iPAs")
+            self.output_dir = self.args.o if self.args.o else os.path.join(self.args.i, "signed_iPAs")
             os.makedirs(self.output_dir, exist_ok=True)
             entries = os.listdir(self.args.i)
             self.ipa_files = [e for e in entries if e.endswith(".ipa")]
@@ -582,18 +588,20 @@ class IPAEditor:
                 sys.exit("[-] output_dir is not set.")
             for ipa_file in self.ipa_files:
                 src = os.path.join(self.args.i, ipa_file)
-                dst = os.path.join(self.output_dir, ipa_file)
+                base = ipa_file[:-4] if ipa_file.endswith(".ipa") else ipa_file
+                dst = os.path.join(self.output_dir, f"{base}_signed.ipa")
                 print(f"[*] signing: {ipa_file}")
                 cmd = f'"{zsign}" -k "{p12_path}" -m "{mb_path}" -p "{cert_pw}" -o "{dst}" -z 9 "{src}"'
                 subprocess.run(cmd, shell=True)
-                print(f"[+] signed: {ipa_file}")
+                print(f"[+] signed: {dst}")
         else:
-            if not self.args.o.endswith(".ipa"):
-                self.args.o += ".ipa"
+            out_path = self.args.o if self.args.o else self._get_auto_out_path("signed")
+            if not out_path.endswith(".ipa"):
+                out_path += ".ipa"
             print(f"[*] signing: {os.path.basename(self.args.i)}")
-            cmd = f'"{zsign}" -k "{p12_path}" -m "{mb_path}" -p "{cert_pw}" -o "{self.args.o}" -z 9 "{self.args.i}"'
+            cmd = f'"{zsign}" -k "{p12_path}" -m "{mb_path}" -p "{cert_pw}" -o "{out_path}" -z 9 "{self.args.i}"'
             subprocess.run(cmd, shell=True)
-            print(f"[+] signed: {self.args.o}")
+            print(f"[+] signed: {out_path}")
 
     def _deb_to_ipa(self) -> None:
         print(SEP)
@@ -620,7 +628,7 @@ class IPAEditor:
         shutil.copytree(src, os.path.join(payload, app_folder))
 
         print("[*] generating iPA")
-        output = self.args.o
+        output = self.args.o if self.args.o else self._get_auto_out_path("unsigned")
         if output.endswith(".ipa"):
             output = output[:-4]
         shutil.make_archive(output, "zip", os.path.dirname(payload), os.path.basename(payload))
@@ -676,13 +684,12 @@ def interactive_mode() -> argparse.Namespace:
         sys.exit("[*] bye")
 
     args = argparse.Namespace(
-        i=None, o=None, b=None, n=None, v=None, p=None,
+        i=None, o="", b=None, n=None, v=None, p=None,
         f=False, d=False, r=False, s=False, e=False, k=False,
     )
 
     if choice == "1":
         args.i = input("[?] input .ipa path: ").strip()
-        args.o = input("[?] output .ipa path: ").strip()
         print(SEP)
         b = input("[?] new bundle ID (enter to skip): ").strip()
         if b:
@@ -710,17 +717,14 @@ def interactive_mode() -> argparse.Namespace:
 
     elif choice == "3":
         args.i = input("[?] input .ipa path: ").strip()
-        args.o = input("[?] output path (unused, enter any): ").strip() or "."
         args.r = True
 
     elif choice == "4":
         args.i = input("[?] input .ipa or folder path: ").strip()
-        args.o = input("[?] output .ipa path or folder: ").strip()
         args.s = True
 
     elif choice == "5":
         args.i = input("[?] input .deb path: ").strip()
-        args.o = input("[?] output .ipa path: ").strip()
         args.e = True
         k = input("[?] keep source .deb? [y/N]: ").lower().strip()
         if k in ("y", "yes"):
@@ -728,12 +732,10 @@ def interactive_mode() -> argparse.Namespace:
 
     elif choice == "6":
         args.i = input("[?] input .ipa path: ").strip()
-        args.o = input("[?] output .ipa path: ").strip()
         args.p = input("[?] icon image path: ").strip()
 
     elif choice == "7":
         args.i = input("[?] input .ipa path: ").strip()
-        args.o = input("[?] output .ipa path: ").strip()
         args.f = True
 
     else:
