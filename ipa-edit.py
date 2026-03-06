@@ -132,13 +132,15 @@ class IPAEditor:
         self._register_cleanup()
 
     def _get_auto_out_path(self, suffix: str) -> str:
-        if not self.args.i:
-            return f"output_{suffix}.ipa"
-        base_name = os.path.basename(self.args.i)
+        base_name = os.path.basename(self.args.i) if self.args.i else "output"
         if base_name.lower().endswith(".ipa") or base_name.lower().endswith(".deb"):
             base_name = base_name[:-4]
-        input_dir = os.path.dirname(os.path.abspath(self.args.i))
-        return os.path.join(input_dir, f"{base_name}_{suffix}.ipa")
+            
+        folder_name = "Signed" if suffix == "signed" else "Unsigned"
+        folder_path = os.path.join(self.script_dir, folder_name)
+        os.makedirs(folder_path, exist_ok=True)
+        
+        return os.path.join(folder_path, f"{base_name}_{suffix}.ipa")
 
     def _register_cleanup(self) -> None:
         atexit.register(self._remove_temp)
@@ -161,8 +163,6 @@ class IPAEditor:
         return self.temp_dir
 
     def run(self) -> None:
-        self._check_output_conflict()
-        self._normalise_output_path()
 
         if not self.args.s and not self.args.e:
             self.ipa_path = self.args.i
@@ -192,24 +192,6 @@ class IPAEditor:
         print(SEP)
         print("[+] done")
         print(SEP)
-
-    def _check_output_conflict(self) -> None:
-        o = self.args.o
-        if (os.path.isfile(o) or os.path.isfile(o + ".ipa") or os.path.isfile(o + ".deb")) \
-                and not self.args.d and not self.args.s:
-            if not self._confirm_overwrite(o):
-                sys.exit("[*] quitting")
-
-    def _normalise_output_path(self) -> None:
-        if os.path.isdir(self.args.o) and not self.args.d:
-            name = os.path.basename(self.args.i)[:-4]
-            self.args.o = os.path.join(self.args.o, name)
-            print(f"{WHITE}[*] output path: {self.args.o}{RESET}")
-
-    def _confirm_overwrite(self, path: str) -> bool:
-        if os.isatty(sys.stdin.fileno()):
-            return input(f"[?] {path} already exists. overwrite? [y/n]: ").lower().strip() in ("y", "yes", "")
-        return os.getenv("OVERWRITE_EXISTING", "Y").lower() == "y"
 
     def _unzip_ipa(self, ipa_path: str) -> tuple[str, str, str]:
         print(SEP)
@@ -250,9 +232,6 @@ class IPAEditor:
 
         if self.args.k:
             print(f"{WHITE}[*] source iPA kept{RESET}")
-        elif self.ipa_path and os.path.exists(self.ipa_path) and os.path.abspath(self.ipa_path) != os.path.abspath(ipa_out):
-            os.remove(self.ipa_path)
-            print(f"{RED}[-] source iPA deleted{RESET}")
 
         print(f"{GREEN}[+] saved: {ipa_out}{RESET}")
 
@@ -560,7 +539,7 @@ class IPAEditor:
         p12_path, mb_path = self._resolve_certificate()
 
         if not self.args.i.endswith(".ipa"):
-            self.output_dir = self.args.o if self.args.o else os.path.join(self.args.i, "signed_iPAs")
+            self.output_dir = os.path.join(self.script_dir, "Signed")
             os.makedirs(self.output_dir, exist_ok=True)
             entries = os.listdir(self.args.i)
             self.ipa_files = [e for e in entries if e.endswith(".ipa")]
@@ -638,9 +617,6 @@ class IPAEditor:
 
         if self.args.k:
             print(f"{WHITE}[*] source deb kept{RESET}")
-        else:
-            os.remove(self.args.i)
-            print(f"{RED}[-] source deb deleted{RESET}")
 
         print(f"{GREEN}[+] saved: {ipa_out}{RESET}")
 
