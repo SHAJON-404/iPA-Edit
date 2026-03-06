@@ -36,7 +36,13 @@ import argparse
 import subprocess
 from PIL import Image
 
-SEP = "-" * 80
+# Colors
+RED = "\033[91m"
+GREEN = "\033[92m"
+WHITE = "\033[97m"
+RESET = "\033[0m"
+
+SEP = f"{WHITE}{'-' * 80}{RESET}"
 
 
 class DebExtractor:
@@ -145,7 +151,7 @@ class IPAEditor:
         for _ in range(3):
             try:
                 shutil.rmtree(self.temp_dir)
-                print("[*] cleaned up .temp folder")
+                print(f"{WHITE}[*] cleaned up .temp folder{RESET}")
                 return
             except (PermissionError, OSError):
                 time.sleep(0.5)
@@ -155,10 +161,6 @@ class IPAEditor:
         return self.temp_dir
 
     def run(self) -> None:
-        print(SEP)
-        print("[*] iPA Edit")
-        print(SEP)
-
         self._check_output_conflict()
         self._normalise_output_path()
 
@@ -202,7 +204,7 @@ class IPAEditor:
         if os.path.isdir(self.args.o) and not self.args.d:
             name = os.path.basename(self.args.i)[:-4]
             self.args.o = os.path.join(self.args.o, name)
-            print(f"[*] output path: {self.args.o}")
+            print(f"{WHITE}[*] output path: {self.args.o}{RESET}")
 
     def _confirm_overwrite(self, path: str) -> bool:
         if os.isatty(sys.stdin.fileno()):
@@ -211,7 +213,7 @@ class IPAEditor:
 
     def _unzip_ipa(self, ipa_path: str) -> tuple[str, str, str]:
         print(SEP)
-        print("[*] extracting iPA")
+        print(f"{WHITE}[*] extracting iPA{RESET}")
         temp = self._ensure_temp()
         zip_path = os.path.join(temp, os.path.basename(ipa_path).replace(".ipa", ".zip"))
         shutil.copy2(ipa_path, zip_path)
@@ -228,12 +230,12 @@ class IPAEditor:
         if app_folder is None:
             sys.exit("[-] .app folder not found inside iPA.")
 
-        print("[+] extracted iPA")
+        print(f"{GREEN}[+] extracted iPA{RESET}")
         return os.path.join(payload_path, app_folder), zip_path, payload_path
 
     def _zip_ipa(self) -> None:
         print(SEP)
-        print("[*] generating iPA...")
+        print(f"{WHITE}[*] generating iPA...{RESET}")
         if self.payload_path is None:
             sys.exit("[-] payload_path is not set.")
 
@@ -247,37 +249,37 @@ class IPAEditor:
         os.replace(zip_out, ipa_out)
 
         if self.args.k:
-            print("[*] source iPA kept")
+            print(f"{WHITE}[*] source iPA kept{RESET}")
         elif self.ipa_path and os.path.exists(self.ipa_path) and os.path.abspath(self.ipa_path) != os.path.abspath(ipa_out):
             os.remove(self.ipa_path)
-            print("[-] source iPA deleted")
+            print(f"{RED}[-] source iPA deleted{RESET}")
 
-        print(f"[+] saved: {ipa_out}")
+        print(f"{GREEN}[+] saved: {ipa_out}{RESET}")
 
     def _restore_source(self) -> None:
-        print("[*] restoring source files")
+        print(f"{WHITE}[*] restoring source files{RESET}")
 
     def _edit_plist(self) -> None:
         if self.app_path is None:
             sys.exit("[-] iPA not extracted.")
         print(SEP)
-        print("[*] editing Info.plist")
+        print(f"{WHITE}[*] editing Info.plist{RESET}")
 
         plist_path = os.path.join(self.app_path, "Info.plist")
         with open(plist_path, "rb") as f:
             pl = plistlib.load(f)
 
         if self.args.b:
-            print(f"[*] bundleID: {pl['CFBundleIdentifier']} -> {self.args.b}")
+            print(f"{WHITE}[*] bundleID: {pl['CFBundleIdentifier']} -> {self.args.b}{RESET}")
             pl["CFBundleIdentifier"] = self.args.b
 
         if self.args.n:
             key = "CFBundleDisplayName" if "CFBundleDisplayName" in pl else "CFBundleName"
-            print(f"[*] app name: {pl.get(key)} -> {self.args.n}")
+            print(f"{WHITE}[*] app name: {pl.get(key)} -> {self.args.n}{RESET}")
             pl[key] = self.args.n
 
         if self.args.v:
-            print(f"[*] version: {pl['CFBundleShortVersionString']} -> {self.args.v}")
+            print(f"{WHITE}[*] version: {pl['CFBundleShortVersionString']} -> {self.args.v}{RESET}")
             pl["CFBundleShortVersionString"] = self.args.v
 
         if self.args.p:
@@ -286,11 +288,11 @@ class IPAEditor:
         if self.args.f:
             pl["LSSupportsOpeningDocumentsInPlace"] = True
             pl["UIFileSharingEnabled"] = True
-            print("[+] enabled document browser")
+            print(f"{GREEN}[+] enabled document browser{RESET}")
 
         with open(plist_path, "wb") as f:
             plistlib.dump(pl, f)
-        print("[+] plist saved")
+        print(f"{GREEN}[+] plist saved{RESET}")
 
     def _apply_icon(self, pl: dict) -> None:
         if self.app_path is None:
@@ -316,7 +318,7 @@ class IPAEditor:
                 "CFBundleIconName": "changedicon_",
             }
         }
-        print("[+] icon changed")
+        print(f"{GREEN}[+] icon changed{RESET}")
 
     def _list_dylibs(self) -> list[str]:
         if self.app_path is None:
@@ -331,11 +333,11 @@ class IPAEditor:
 
     def _export_dylibs(self) -> None:
         print(SEP)
-        print("[*] export dylibs")
+        print(f"{WHITE}[*] export dylibs{RESET}")
         dylibs = self._list_dylibs()
 
         if not dylibs:
-            print("[-] no dylibs found")
+            print(f"{RED}[-] no dylibs found{RESET}")
             return
 
         for i, f in enumerate(dylibs, 1):
@@ -343,7 +345,7 @@ class IPAEditor:
 
         selection = input("[?] file numbers (comma separated) or 'exit': ").strip().lower()
         if selection == "exit":
-            print("[*] export cancelled")
+            print(f"{WHITE}[*] export cancelled{RESET}")
             return
 
         selected = [dylibs[int(n.strip()) - 1] for n in selection.split(",")]
@@ -361,19 +363,19 @@ class IPAEditor:
                 exported_dl = True
 
         if exported_fw and exported_dl:
-            print("[+] exported .framework(s) and .dylib(s)")
+            print(f"{GREEN}[+] exported .framework(s) and .dylib(s){RESET}")
         elif exported_fw:
-            print("[+] exported .framework(s)")
+            print(f"{GREEN}[+] exported .framework(s){RESET}")
         else:
-            print("[+] exported .dylib(s)")
+            print(f"{GREEN}[+] exported .dylib(s){RESET}")
 
     def _remove_and_sign(self) -> None:
         print(SEP)
-        print("[*] remove dylibs & sign")
+        print(f"{WHITE}[*] remove dylibs & sign{RESET}")
         dylibs = self._list_dylibs()
 
         if not dylibs:
-            print("[-] no dylibs found")
+            print(f"{RED}[-] no dylibs found{RESET}")
             return
 
         for i, f in enumerate(dylibs, 1):
@@ -381,7 +383,7 @@ class IPAEditor:
 
         selection = input("[?] file numbers to DELETE (comma separated) or 'exit': ").strip().lower()
         if selection == "exit":
-            print("[*] cancelled")
+            print(f"{WHITE}[*] cancelled{RESET}")
             return
 
         selected = [dylibs[int(n.strip()) - 1] for n in selection.split(",")]
@@ -393,16 +395,16 @@ class IPAEditor:
                 shutil.rmtree(f)
             else:
                 os.remove(f)
-            print(f"[-] deleted: {name}")
-        print("[+] dylib removal complete")
+            print(f"{RED}[-] deleted: {name}{RESET}")
+        print(f"{GREEN}[+] dylib removal complete{RESET}")
 
         print(SEP)
-        print("[*] patching binary to remove dylib references")
+        print(f"{WHITE}[*] patching binary to remove dylib references{RESET}")
         self._patch_binary_remove_dylibs(deleted_names)
-        print("[+] binary patched")
+        print(f"{GREEN}[+] binary patched{RESET}")
 
         print(SEP)
-        print("[*] re-packing iPA")
+        print(f"{WHITE}[*] re-packing iPA{RESET}")
         if self.payload_path is None:
             sys.exit("[-] payload_path is not set.")
         temp = self._ensure_temp()
@@ -417,22 +419,23 @@ class IPAEditor:
 
         if do_sign:
             print(SEP)
-            print("[*] signing")
+            print(f"{WHITE}[*] signing{RESET}")
             zsign = self._resolve_zsign()
             p12_path, mb_path = self._resolve_certificate()
             if not p12_path or not mb_path:
                 p12_path = input("[?] .p12 path: ").strip(' "\'')
                 mb_path = input("[?] .mobileprovision path: ").strip(' "\'')
             cert_pw = input("[?] certificate password: ")
+            print(SEP)
 
             signed_final = self.args.o if self.args.o else self._get_auto_out_path("signed")
             cmd = f'"{zsign}" -k "{p12_path}" -m "{mb_path}" -p "{cert_pw}" -o "{signed_final}" -z 9 "{unsigned_ipa}"'
             subprocess.run(cmd, shell=True)
-            print(f"[+] signed: {signed_final}")
+            print(f"{GREEN}[+] signed: {signed_final}{RESET}")
         else:
             unsigned_final = self.args.o if self.args.o else self._get_auto_out_path("unsigned")
             shutil.copy2(unsigned_ipa, unsigned_final)
-            print(f"[+] unsigned saved: {unsigned_final}")
+            print(f"{GREEN}[+] unsigned saved: {unsigned_final}{RESET}")
 
     def _find_main_executable(self) -> str | None:
         if self.app_path is None:
@@ -451,7 +454,7 @@ class IPAEditor:
     def _patch_binary_remove_dylibs(self, deleted_names: list[str]) -> None:
         exe = self._find_main_executable()
         if exe is None:
-            print("[-] main executable not found, skipping patch")
+            print(f"{RED}[-] main executable not found, skipping patch{RESET}")
             return
 
         with open(exe, "rb") as f:
@@ -467,7 +470,7 @@ class IPAEditor:
         elif magic in (0xFEEDFACE, 0xFEEDFACF):
             self._patch_macho_slice(data, 0, deleted_names)
         else:
-            print("[-] unknown binary format, skipping patch")
+            print(f"{RED}[-] unknown binary format, skipping patch{RESET}")
             return
 
         with open(exe, "wb") as f:
@@ -524,13 +527,13 @@ class IPAEditor:
         if removed:
             struct.pack_into("<I", data, base + 16, ncmds)
             struct.pack_into("<I", data, base + 20, sizeofcmds)
-            print(f"[+] removed {removed} dylib reference(s) from binary")
+            print(f"{GREEN}[+] removed {removed} dylib reference(s) from binary{RESET}")
 
     def _resolve_zsign(self) -> str:
         platform_map = {"Windows": "windows/zsign.exe", "Darwin": "mac/zsign", "Linux": "linux/zsign"}
         local = os.path.join(self.script_dir, "zsign", platform_map.get(platform.system(), ""))
         if os.path.isfile(local):
-            print(f"[*] zsign: {local}")
+            print(f"{WHITE}[*] zsign: {local}{RESET}")
             return local
         if shutil.which("zsign"):
             return "zsign"
@@ -546,15 +549,13 @@ class IPAEditor:
                 elif f.endswith(".mobileprovision"):
                     mp = os.path.join(cert_dir, f)
         if p12 and mp:
-            ans = input("[?] use certificate from certificate/ folder? [Y/n]: ").lower().strip()
-            if ans in ("y", "yes", ""):
-                print(f"[+] cert: {os.path.basename(p12)} + {os.path.basename(mp)}")
-                return p12, mp
+            print(f"{GREEN}[+] cert: {os.path.basename(p12)} + {os.path.basename(mp)}{RESET}")
+            return p12, mp
         return "", ""
 
     def _sign(self) -> None:
         print(SEP)
-        print("[*] signing")
+        print(f"{WHITE}[*] signing{RESET}")
         zsign = self._resolve_zsign()
         p12_path, mb_path = self._resolve_certificate()
 
@@ -590,27 +591,27 @@ class IPAEditor:
                 src = os.path.join(self.args.i, ipa_file)
                 base = ipa_file[:-4] if ipa_file.endswith(".ipa") else ipa_file
                 dst = os.path.join(self.output_dir, f"{base}_signed.ipa")
-                print(f"[*] signing: {ipa_file}")
+                print(f"{WHITE}[*] signing: {ipa_file}{RESET}")
                 cmd = f'"{zsign}" -k "{p12_path}" -m "{mb_path}" -p "{cert_pw}" -o "{dst}" -z 9 "{src}"'
                 subprocess.run(cmd, shell=True)
-                print(f"[+] signed: {dst}")
+                print(f"{GREEN}[+] signed: {dst}{RESET}")
         else:
             out_path = self.args.o if self.args.o else self._get_auto_out_path("signed")
             if not out_path.endswith(".ipa"):
                 out_path += ".ipa"
-            print(f"[*] signing: {os.path.basename(self.args.i)}")
+            print(f"{WHITE}[*] signing: {os.path.basename(self.args.i)}{RESET}")
             cmd = f'"{zsign}" -k "{p12_path}" -m "{mb_path}" -p "{cert_pw}" -o "{out_path}" -z 9 "{self.args.i}"'
             subprocess.run(cmd, shell=True)
-            print(f"[+] signed: {out_path}")
+            print(f"{GREEN}[+] signed: {out_path}{RESET}")
 
     def _deb_to_ipa(self) -> None:
         print(SEP)
-        print("[*] converting .deb to .ipa")
+        print(f"{WHITE}[*] converting .deb to .ipa{RESET}")
         temp = self._ensure_temp()
         deb_temp = os.path.join(temp, "deb_extract")
         os.makedirs(deb_temp, exist_ok=True)
 
-        print("[*] extracting deb")
+        print(f"{WHITE}[*] extracting deb{RESET}")
         DebExtractor.extract(self.args.i, deb_temp)
 
         apps_dir = os.path.join(deb_temp, "Applications")
@@ -621,13 +622,13 @@ class IPAEditor:
         if app_folder is None:
             sys.exit("[-] .app not found. Check: https://github.com/binnichtaktiv/iPA-Edit/issues")
 
-        print(f"[+] found: {app_folder}")
+        print(f"{GREEN}[+] found: {app_folder}{RESET}")
         src = os.path.join(apps_dir, app_folder)
         payload = os.path.join(deb_temp, "Payload")
         os.makedirs(payload, exist_ok=True)
         shutil.copytree(src, os.path.join(payload, app_folder))
 
-        print("[*] generating iPA")
+        print(f"{WHITE}[*] generating iPA{RESET}")
         output = self.args.o if self.args.o else self._get_auto_out_path("unsigned")
         if output.endswith(".ipa"):
             output = output[:-4]
@@ -636,12 +637,12 @@ class IPAEditor:
         os.replace(output + ".zip", ipa_out)
 
         if self.args.k:
-            print("[*] source deb kept")
+            print(f"{WHITE}[*] source deb kept{RESET}")
         else:
             os.remove(self.args.i)
-            print("[-] source deb deleted")
+            print(f"{RED}[-] source deb deleted{RESET}")
 
-        print(f"[+] saved: {ipa_out}")
+        print(f"{GREEN}[+] saved: {ipa_out}{RESET}")
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -664,9 +665,9 @@ def build_parser() -> argparse.ArgumentParser:
 def interactive_mode() -> argparse.Namespace:
     os.system("cls" if os.name == "nt" else "clear")
     print(SEP)
-    print("[*] iPA Edit – Interactive Mode")
-    print("[*] Author: S. SHAJON")
-    print("[*] GitHub: https://github.com/SHAJON-404/iPA-Edit.git")
+    print(f"{WHITE}[*] iPA Edit – Interactive Mode{RESET}")
+    print(f"{WHITE}[*] Author: S. SHAJON{RESET}")
+    print(f"{WHITE}[*] GitHub: https://github.com/SHAJON-404/iPA-Edit.git{RESET}")
     print(SEP)
     print("  1: Edit iPA (bundle ID, name, version, icon, file browser)")
     print("  2: Export dylibs from iPA")
@@ -681,7 +682,7 @@ def interactive_mode() -> argparse.Namespace:
     choice = input("[?] select option (1-8): ").strip()
     print(SEP)
     if choice == "8":
-        sys.exit("[*] bye")
+        sys.exit(f"{WHITE}[*] bye{RESET}")
 
     args = argparse.Namespace(
         i=None, o="", b=None, n=None, v=None, p=None,
@@ -763,6 +764,6 @@ if __name__ == "__main__":
                 
         IPAEditor(ns).run()
     except KeyboardInterrupt:
-        print("\n[*] interrupted, exiting.")
+        print(f"\n{WHITE}[*] interrupted, exiting.{RESET}")
         sys.exit(0)
 
