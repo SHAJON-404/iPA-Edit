@@ -415,8 +415,8 @@ class IPAEditor:
         zsign = self._resolve_zsign()
         p12_path, mb_path = self._resolve_certificate()
         if not p12_path or not mb_path:
-            p12_path = input("[?] .p12 path: ")
-            mb_path = input("[?] .mobileprovision path: ")
+            p12_path = input("[?] .p12 path: ").strip(' "\'')
+            mb_path = input("[?] .mobileprovision path: ").strip(' "\'')
         cert_pw = input("[?] certificate password: ")
 
         signed_dir = os.path.join(self.script_dir, "Signed")
@@ -528,7 +528,7 @@ class IPAEditor:
             return local
         if shutil.which("zsign"):
             return "zsign"
-        return input("[?] zsign path: ")
+        return input("[?] zsign path: ").strip(' "\'')
 
     def _resolve_certificate(self) -> tuple[str, str]:
         cert_dir = os.path.join(self.script_dir, "certificate")
@@ -570,8 +570,8 @@ class IPAEditor:
                         print(f"[+] cert: {p12_path} + {mb_path}")
 
         if not p12_path or not mb_path:
-            p12_path = input("[?] .p12 path: ")
-            mb_path = input("[?] .mobileprovision path: ")
+            p12_path = input("[?] .p12 path: ").strip(' "\'')
+            mb_path = input("[?] .mobileprovision path: ").strip(' "\'')
 
         cert_pw = input("[?] certificate password: ")
 
@@ -753,6 +753,12 @@ if __name__ == "__main__":
             ns = build_parser().parse_args()
             if not ns.i or not ns.o:
                 sys.exit("[-] -i and -o are required when using command-line arguments.")
+                
+        for attr in ['i', 'o', 'p']:
+            val = getattr(ns, attr, None)
+            if isinstance(val, str):
+                setattr(ns, attr, val.strip(' "\''))
+                
         IPAEditor(ns).run()
     except KeyboardInterrupt:
         print("\n[*] interrupted, exiting.")
