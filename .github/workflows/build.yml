@@ -18,14 +18,17 @@ jobs:
       matrix:
         include:
           - os: windows-latest
-            artifact_name: ipa-edit-windows.exe
-            pyinstaller_name: ipa-edit.exe
+            binary_src: ipa-edit.exe
+            binary_dest: ipa-edit.exe
+            zip_name: iPA-Edit-windows.zip
           - os: macos-latest
-            artifact_name: ipa-edit-macos
-            pyinstaller_name: ipa-edit
+            binary_src: ipa-edit
+            binary_dest: ipa-edit
+            zip_name: iPA-Edit-macos.zip
           - os: ubuntu-latest
-            artifact_name: ipa-edit-linux
-            pyinstaller_name: ipa-edit
+            binary_src: ipa-edit
+            binary_dest: ipa-edit
+            zip_name: iPA-Edit-linux.zip
 
     steps:
       - name: Checkout
@@ -44,20 +47,58 @@ jobs:
       - name: Build binary
         run: pyinstaller --onefile --name ipa-edit --clean ipa-edit.py
 
-      - name: Rename binary (Windows)
+      - name: Package (Windows)
         if: runner.os == 'Windows'
         shell: pwsh
-        run: Rename-Item dist\ipa-edit.exe ${{ matrix.artifact_name }}
+        run: |
+          $pkg = "staging\iPA-Edit"
+          New-Item -ItemType Directory -Force -Path $pkg | Out-Null
 
-      - name: Rename binary (Unix)
+          # Copy repo assets (exclude dev/build artifacts and ipa-edit.py)
+          $exclude = @('.git','.github','__pycache__','.temp','Signed','Unsigned',
+                       'tweaks_extracted','build','dist','*.spec','ipa-edit.py')
+          Get-ChildItem -Force | Where-Object { $_.Name -notin $exclude } |
+            Copy-Item -Destination $pkg -Recurse -Force
+
+          # Ensure key dirs exist (empty placeholders)
+          New-Item -ItemType Directory -Force -Path "$pkg\certificate" | Out-Null
+          New-Item -ItemType Directory -Force -Path "$pkg\tweaks"       | Out-Null
+          New-Item -ItemType Directory -Force -Path "$pkg\Signed"       | Out-Null
+          New-Item -ItemType Directory -Force -Path "$pkg\Unsigned"     | Out-Null
+
+          # Place binary (replaces ipa-edit.py)
+          Copy-Item dist\${{ matrix.binary_src }} $pkg\${{ matrix.binary_dest }}
+
+          Compress-Archive -Path $pkg -DestinationPath ${{ matrix.zip_name }}
+
+      - name: Package (Unix)
         if: runner.os != 'Windows'
-        run: mv dist/ipa-edit dist/${{ matrix.artifact_name }}
+        run: |
+          PKG="staging/iPA-Edit"
+          mkdir -p "$PKG"
+
+          # Copy repo assets (exclude dev/build artifacts and ipa-edit.py)
+          for item in $(ls -A); do
+            case "$item" in
+              .git|.github|__pycache__|.temp|Signed|Unsigned|tweaks_extracted|build|dist|*.spec|ipa-edit.py) continue ;;
+            esac
+            cp -r "$item" "$PKG/" 2>/dev/null || true
+          done
+
+          # Ensure key dirs exist (empty placeholders)
+          mkdir -p "$PKG/certificate" "$PKG/tweaks" "$PKG/Signed" "$PKG/Unsigned"
+
+          # Place binary (replaces ipa-edit.py)
+          cp dist/${{ matrix.binary_src }} "$PKG/${{ matrix.binary_dest }}"
+          chmod +x "$PKG/${{ matrix.binary_dest }}"
+
+          cd staging && zip -r ../${{ matrix.zip_name }} iPA-Edit/
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
-          name: ${{ matrix.artifact_name }}
-          path: dist/${{ matrix.artifact_name }}
+          name: ${{ matrix.zip_name }}
+          path: ${{ matrix.zip_name }}
 
   release:
     name: Create Release
@@ -80,9 +121,9 @@ jobs:
       - name: Compute checksums
         id: hashes
         run: |
-          WIN=$(sha256sum dist/ipa-edit-windows.exe | awk '{print $1}')
-          MAC=$(sha256sum dist/ipa-edit-macos      | awk '{print $1}')
-          LIN=$(sha256sum dist/ipa-edit-linux      | awk '{print $1}')
+          WIN=$(sha256sum dist/iPA-Edit-windows.zip | awk '{print $1}')
+          MAC=$(sha256sum dist/iPA-Edit-macos.zip   | awk '{print $1}')
+          LIN=$(sha256sum dist/iPA-Edit-linux.zip   | awk '{print $1}')
           echo "win=$WIN" >> $GITHUB_OUTPUT
           echo "mac=$MAC" >> $GITHUB_OUTPUT
           echo "lin=$LIN" >> $GITHUB_OUTPUT
@@ -122,11 +163,12 @@ jobs:
 
           | Platform | File | SHA-256 |
           |:--|:--|:--|
-          | 🪟 Windows | \`ipa-edit-windows.exe\` | \`${{ steps.hashes.outputs.win }}\` |
-          | 🍎 macOS   | \`ipa-edit-macos\`       | \`${{ steps.hashes.outputs.mac }}\` |
-          | 🐧 Linux   | \`ipa-edit-linux\`       | \`${{ steps.hashes.outputs.lin }}\` |
+          | 🪟 Windows | \`iPA-Edit-windows.zip\` | \`${{ steps.hashes.outputs.win }}\` |
+          | 🍎 macOS   | \`iPA-Edit-macos.zip\`   | \`${{ steps.hashes.outputs.mac }}\` |
+          | 🐧 Linux   | \`iPA-Edit-linux.zip\`   | \`${{ steps.hashes.outputs.lin }}\` |
 
-          > **macOS / Linux:** run \`chmod +x ipa-edit-*\` before first use.
+          > Each zip contains the full tool structure with the executable replacing \`ipa-edit.py\`.
+          > **macOS / Linux:** run \`chmod +x ipa-edit\` inside the extracted folder if needed.
 
           ---
 
@@ -146,8 +188,8 @@ jobs:
         with:
           body_path: notes.md
           files: |
-            dist/ipa-edit-windows.exe
-            dist/ipa-edit-macos
-            dist/ipa-edit-linux
+            dist/iPA-Edit-windows.zip
+            dist/iPA-Edit-macos.zip
+            dist/iPA-Edit-linux.zip
           draft: false
           prerelease: false
