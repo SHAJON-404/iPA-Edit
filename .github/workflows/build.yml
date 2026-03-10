@@ -20,15 +20,15 @@ jobs:
           - os: windows-latest
             binary_src: ipa-edit.exe
             binary_dest: ipa-edit.exe
-            zip_name: iPA-Edit-windows.zip
+            zip_name: iPA-Edit-windows-x64.zip
           - os: macos-latest
             binary_src: ipa-edit
             binary_dest: ipa-edit
-            zip_name: iPA-Edit-macos.zip
+            zip_name: iPA-Edit-macOS-x64.zip
           - os: ubuntu-latest
             binary_src: ipa-edit
             binary_dest: ipa-edit
-            zip_name: iPA-Edit-linux.zip
+            zip_name: iPA-Edit-linux-x64.zip
 
     steps:
       - name: Checkout
@@ -54,22 +54,21 @@ jobs:
           $pkg = "staging\iPA-Edit"
           New-Item -ItemType Directory -Force -Path $pkg | Out-Null
 
-          # Copy repo assets (exclude dev/build artifacts and ipa-edit.py)
-          $exclude = @('.git','.github','__pycache__','.temp','Signed','Unsigned',
-                       'tweaks_extracted','build','dist','*.spec','ipa-edit.py')
-          Get-ChildItem -Force | Where-Object { $_.Name -notin $exclude } |
-            Copy-Item -Destination $pkg -Recurse -Force
+          # Copy only the explicit items we want
+          Copy-Item README.md        "$pkg\README.md"
+          Copy-Item requirements.txt "$pkg\requirements.txt"
+          Copy-Item -Recurse zsign   "$pkg\zsign"
 
-          # Ensure key dirs exist (empty placeholders)
+          # Create empty placeholder dirs
           New-Item -ItemType Directory -Force -Path "$pkg\certificate" | Out-Null
           New-Item -ItemType Directory -Force -Path "$pkg\tweaks"       | Out-Null
           New-Item -ItemType Directory -Force -Path "$pkg\Signed"       | Out-Null
           New-Item -ItemType Directory -Force -Path "$pkg\Unsigned"     | Out-Null
 
-          # Place binary (replaces ipa-edit.py)
-          Copy-Item dist\${{ matrix.binary_src }} $pkg\${{ matrix.binary_dest }}
+          # Place executable (replaces ipa-edit.py)
+          Copy-Item dist\${{ matrix.binary_src }} "$pkg\${{ matrix.binary_dest }}"
 
-          Compress-Archive -Path $pkg -DestinationPath ${{ matrix.zip_name }}
+          Compress-Archive -Path staging\iPA-Edit -DestinationPath ${{ matrix.zip_name }}
 
       - name: Package (Unix)
         if: runner.os != 'Windows'
@@ -77,18 +76,14 @@ jobs:
           PKG="staging/iPA-Edit"
           mkdir -p "$PKG"
 
-          # Copy repo assets (exclude dev/build artifacts and ipa-edit.py)
-          for item in $(ls -A); do
-            case "$item" in
-              .git|.github|__pycache__|.temp|Signed|Unsigned|tweaks_extracted|build|dist|*.spec|ipa-edit.py) continue ;;
-            esac
-            cp -r "$item" "$PKG/" 2>/dev/null || true
-          done
+          # Copy only the explicit items we want
+          cp README.md requirements.txt "$PKG/"
+          cp -r zsign "$PKG/zsign"
 
-          # Ensure key dirs exist (empty placeholders)
+          # Create empty placeholder dirs
           mkdir -p "$PKG/certificate" "$PKG/tweaks" "$PKG/Signed" "$PKG/Unsigned"
 
-          # Place binary (replaces ipa-edit.py)
+          # Place executable (replaces ipa-edit.py)
           cp dist/${{ matrix.binary_src }} "$PKG/${{ matrix.binary_dest }}"
           chmod +x "$PKG/${{ matrix.binary_dest }}"
 
@@ -121,9 +116,9 @@ jobs:
       - name: Compute checksums
         id: hashes
         run: |
-          WIN=$(sha256sum dist/iPA-Edit-windows.zip | awk '{print $1}')
-          MAC=$(sha256sum dist/iPA-Edit-macos.zip   | awk '{print $1}')
-          LIN=$(sha256sum dist/iPA-Edit-linux.zip   | awk '{print $1}')
+          WIN=$(sha256sum "dist/iPA-Edit-windows-x64.zip" | awk '{print $1}')
+          MAC=$(sha256sum "dist/iPA-Edit-macOS-x64.zip"   | awk '{print $1}')
+          LIN=$(sha256sum "dist/iPA-Edit-linux-x64.zip"   | awk '{print $1}')
           echo "win=$WIN" >> $GITHUB_OUTPUT
           echo "mac=$MAC" >> $GITHUB_OUTPUT
           echo "lin=$LIN" >> $GITHUB_OUTPUT
@@ -163,12 +158,12 @@ jobs:
 
           | Platform | File | SHA-256 |
           |:--|:--|:--|
-          | 🪟 Windows | \`iPA-Edit-windows.zip\` | \`${{ steps.hashes.outputs.win }}\` |
-          | 🍎 macOS   | \`iPA-Edit-macos.zip\`   | \`${{ steps.hashes.outputs.mac }}\` |
-          | 🐧 Linux   | \`iPA-Edit-linux.zip\`   | \`${{ steps.hashes.outputs.lin }}\` |
+          | 🪟 Windows x64 | \`iPA-Edit-windows-x64.zip\` | \`${{ steps.hashes.outputs.win }}\` |
+          | 🍎 macOS x64   | \`iPA-Edit-macOS-x64.zip\`   | \`${{ steps.hashes.outputs.mac }}\` |
+          | 🐧 Linux x64   | \`iPA-Edit-linux-x64.zip\`   | \`${{ steps.hashes.outputs.lin }}\` |
 
-          > Each zip contains the full tool structure with the executable replacing \`ipa-edit.py\`.
-          > **macOS / Linux:** run \`chmod +x ipa-edit\` inside the extracted folder if needed.
+          > Extract the zip and run the executable directly. Place your \`.p12\` + \`.mobileprovision\` in \`certificate/\` and tweaks in \`tweaks/\`.
+          > **macOS / Linux:** run \`chmod +x ipa-edit\` on first use.
 
           ---
 
@@ -188,8 +183,8 @@ jobs:
         with:
           body_path: notes.md
           files: |
-            dist/iPA-Edit-windows.zip
-            dist/iPA-Edit-macos.zip
-            dist/iPA-Edit-linux.zip
+            dist/iPA-Edit-windows-x64.zip
+            dist/iPA-Edit-macOS-x64.zip
+            dist/iPA-Edit-linux-x64.zip
           draft: false
           prerelease: false
