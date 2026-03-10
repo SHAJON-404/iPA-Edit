@@ -42,8 +42,7 @@ jobs:
           pip install pyinstaller
 
       - name: Build binary
-        run: |
-          pyinstaller --onefile --name ipa-edit --clean ipa-edit.py
+        run: pyinstaller --onefile --name ipa-edit --clean ipa-edit.py
 
       - name: Rename binary (Windows)
         if: runner.os == 'Windows'
@@ -54,34 +53,11 @@ jobs:
         if: runner.os != 'Windows'
         run: mv dist/ipa-edit dist/${{ matrix.artifact_name }}
 
-      - name: Compute SHA-256 (Windows)
-        if: runner.os == 'Windows'
-        shell: pwsh
-        run: |
-          $hash = (Get-FileHash dist\${{ matrix.artifact_name }} -Algorithm SHA256).Hash.ToLower()
-          echo "$hash  ${{ matrix.artifact_name }}" >> dist/checksums.txt
-          echo "SHA256=$hash" >> $env:GITHUB_OUTPUT
-        id: checksum
-
-      - name: Compute SHA-256 (Unix)
-        if: runner.os != 'Windows'
-        id: checksum_unix
-        run: |
-          HASH=$(sha256sum dist/${{ matrix.artifact_name }} | awk '{print $1}')
-          echo "$HASH  ${{ matrix.artifact_name }}" >> dist/checksums.txt
-          echo "SHA256=$HASH" >> $GITHUB_OUTPUT
-
-      - name: Upload binary artifact
+      - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
           name: ${{ matrix.artifact_name }}
           path: dist/${{ matrix.artifact_name }}
-
-      - name: Upload checksum artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: checksum-${{ matrix.artifact_name }}
-          path: dist/checksums.txt
 
   release:
     name: Create Release
@@ -101,47 +77,43 @@ jobs:
           path: dist/
           merge-multiple: true
 
-      - name: Merge checksums
+      - name: Compute checksums
+        id: hashes
         run: |
-          cat dist/checksums.txt 2>/dev/null || true
-          sort -u dist/checksums.txt -o dist/checksums.txt 2>/dev/null || true
+          WIN=$(sha256sum dist/ipa-edit-windows.exe | awk '{print $1}')
+          MAC=$(sha256sum dist/ipa-edit-macos      | awk '{print $1}')
+          LIN=$(sha256sum dist/ipa-edit-linux      | awk '{print $1}')
+          echo "win=$WIN" >> $GITHUB_OUTPUT
+          echo "mac=$MAC" >> $GITHUB_OUTPUT
+          echo "lin=$LIN" >> $GITHUB_OUTPUT
 
       - name: Get previous tag
-        id: prev_tag
+        id: prev
         run: |
           PREV=$(git tag --sort=-version:refname | grep -v "^${{ github.ref_name }}$" | head -n1)
           echo "tag=$PREV" >> $GITHUB_OUTPUT
 
       - name: Generate changelog
-        id: changelog
+        id: log
         run: |
-          if [ -n "${{ steps.prev_tag.outputs.tag }}" ]; then
-            LOG=$(git log ${{ steps.prev_tag.outputs.tag }}..${{ github.ref_name }} \
+          if [ -n "${{ steps.prev.outputs.tag }}" ]; then
+            LOG=$(git log ${{ steps.prev.outputs.tag }}..${{ github.ref_name }} \
               --pretty=format:"- %s ([%h](https://github.com/${{ github.repository }}/commit/%H))" \
               --no-merges)
           else
             LOG=$(git log --pretty=format:"- %s ([%h](https://github.com/${{ github.repository }}/commit/%H))" \
               --no-merges | head -20)
           fi
-          echo "log<<EOF" >> $GITHUB_OUTPUT
-          echo "$LOG" >> $GITHUB_OUTPUT
-          echo "EOF" >> $GITHUB_OUTPUT
+          echo "entries<<EOF" >> $GITHUB_OUTPUT
+          echo "$LOG"         >> $GITHUB_OUTPUT
+          echo "EOF"          >> $GITHUB_OUTPUT
 
       - name: Build release notes
-        id: notes
         run: |
-          TAG="${{ github.ref_name }}"
-          REPO="${{ github.repository }}"
-          DATE=$(date -u '+%Y-%m-%d')
+          cat > notes.md << 'MD'
+          ## iPA Edit ${{ github.ref_name }}
 
-          # Read checksums
-          WIN_HASH=$(grep "ipa-edit-windows.exe" dist/checksums.txt | awk '{print $1}')
-          MAC_HASH=$(grep "ipa-edit-macos" dist/checksums.txt | awk '{print $1}')
-          LIN_HASH=$(grep "ipa-edit-linux" dist/checksums.txt | awk '{print $1}')
-
-          cat > release_notes.md << NOTES
-          ## iPA Edit ${TAG}
-          > Released on **${DATE}** · [Full Changelog](https://github.com/${REPO}/commits/${TAG})
+          > Released on **$(date -u '+%Y-%m-%d')**
 
           ---
 
@@ -149,61 +121,32 @@ jobs:
 
           | Platform | File | SHA-256 |
           |:--|:--|:--|
-          | 🪟 Windows | \`ipa-edit-windows.exe\` | \`${WIN_HASH}\` |
-          | 🍎 macOS | \`ipa-edit-macos\` | \`${MAC_HASH}\` |
-          | 🐧 Linux | \`ipa-edit-linux\` | \`${LIN_HASH}\` |
+          | 🪟 Windows | `ipa-edit-windows.exe` | `${{ steps.hashes.outputs.win }}` |
+          | 🍎 macOS   | `ipa-edit-macos`       | `${{ steps.hashes.outputs.mac }}` |
+          | 🐧 Linux   | `ipa-edit-linux`       | `${{ steps.hashes.outputs.lin }}` |
 
-          ---
-
-          ### 🚀 Quick Start
-
-          **Windows**
-          \`\`\`bat
-          ipa-edit-windows.exe
-          \`\`\`
-
-          **macOS / Linux** *(make executable first)*
-          \`\`\`bash
-          chmod +x ipa-edit-macos   # or ipa-edit-linux
-          ./ipa-edit-macos
-          \`\`\`
-
-          > Place your \`.p12\` + \`.mobileprovision\` in a \`certificate/\` folder next to the binary.
-          > Place tweak \`.dylib\` files in a \`tweaks/\` folder for injection (option **8**).
+          > **macOS / Linux:** run `chmod +x ipa-edit-*` before first use.
 
           ---
 
           ### 🔄 What's Changed
 
-          ${{ steps.changelog.outputs.log }}
-
-          ---
-
-          ### 🔐 Verify Integrity
-
-          \`\`\`bash
-          sha256sum ipa-edit-linux      # Linux
-          shasum -a 256 ipa-edit-macos  # macOS
-          \`\`\`
-          Compare the output against the checksums in the table above.
+          ${{ steps.log.outputs.entries }}
 
           ---
 
           <p align="center">
           Made with ❤️ by <a href="https://github.com/SHAJON-404">SHAJON-404</a> · <a href="https://shajon.dev">shajon.dev</a>
           </p>
-          NOTES
-
-          echo "path=release_notes.md" >> $GITHUB_OUTPUT
+          MD
 
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
         with:
-          body_path: release_notes.md
+          body_path: notes.md
           files: |
             dist/ipa-edit-windows.exe
             dist/ipa-edit-macos
             dist/ipa-edit-linux
-            dist/checksums.txt
           draft: false
           prerelease: false
