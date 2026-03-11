@@ -12,7 +12,7 @@ About:
 
     Usage: python ipa-edit.py -i <input_ipa> -o <output_ipa>
     
-    Version: v1.1
+    Version: v1.2
     Author [Remake]: SHAJON-404
     GitHub: https://github.com/SHAJON-404
     Website: https://shajon.dev
@@ -37,7 +37,7 @@ import argparse
 import subprocess
 from PIL import Image
 
-__version__ = "1.1"
+__version__ = "1.2"
 
 # Colors
 RED = "\033[91m"
@@ -631,84 +631,187 @@ class IPAEditor:
         print(f"{GREEN}[+] Saved: {ipa_out}{RESET}")
 
 
-    _HASH_JSON_NAME = "hash.json"
-    _TOOL_META = {
-        "tool":    "iPA-Edit",
-        "author":  "SHAJON-404",
-        "github":  "https://github.com/SHAJON-404/iPA-Edit",
-        "website": "https://shajon.dev",
-        "license": "GPLv3",
-    }
-
-    @staticmethod
-    def _sha256(path: str) -> str:
-        h = hashlib.sha256()
-        with open(path, "rb") as f:
-            for chunk in iter(lambda: f.read(65536), b""):
-                h.update(chunk)
-        return h.hexdigest()
-
     def _list_tweaks(self) -> list[str]:
-        """Return sorted list of .dylib paths inside the tweaks/ folder."""
         tweaks_dir = os.path.join(self.script_dir, "tweaks")
         if not os.path.isdir(tweaks_dir):
             return []
         return sorted(
             os.path.join(tweaks_dir, f)
             for f in os.listdir(tweaks_dir)
-            if f.endswith(".dylib")
+            if f.endswith((".dylib", ".deb"))
         )
 
-    def _read_hash_json(self, ipa_path: str) -> dict[str, str]:
-        """Read {dylib_name: sha256} from hash.json inside the IPA zip.
-        Returns empty dict if the file doesn't exist or can't be parsed."""
+    def _dylib_needs_substrate(self, dylib_path: str) -> bool:
         try:
-            with zipfile.ZipFile(ipa_path, "r") as zf:
-                if self._HASH_JSON_NAME in zf.namelist():
-                    data = json.loads(zf.read(self._HASH_JSON_NAME))
-                    return data.get("dylibs", {})
+            with open(dylib_path, "rb") as f:
+                raw = f.read()
+            return b"CydiaSubstrate" in raw or b"libhooker" in raw or b"libsubstrate" in raw
         except Exception:
+            return False
+
+    def _inject_lc_load_weak_dylib(self, data: bytearray, dylib_path_str: str) -> None:
+        """Append one LC_LOAD_WEAK_DYLIB load command to every Mach-O slice."""
+        magic = struct.unpack_from("<I", data, 0)[0]
+        if magic in (0xCAFEBABE, 0xBEBAFECA):
+            nfat = struct.unpack_from(">I", data, 4)[0]
+            for idx in range(nfat):
+                off = 8 + idx * 20
+                sl  = struct.unpack_from(">I", data, off + 8)[0]
+                self._inject_lc_into_slice(data, sl, dylib_path_str)
+        elif magic in (0xFEEDFACE, 0xFEEDFACF):
+            self._inject_lc_into_slice(data, 0, dylib_path_str)
+
+    def _inject_lc_into_slice(self, data: bytearray, base: int, dylib_path_str: str) -> None:
+        """Inject LC_LOAD_DYLIB/WEAK into one Mach-O slice."""
+        LC_LOAD_WEAK  = 0x80000018
+        LC_LOAD_DYLIB = 0x0c
+        LC_SEGMENT    = 0x01
+        LC_SEGMENT_64 = 0x19
+        DYLIB_CMD_SIZE = 24   # sizeof(dylib_command)
+
+        sl_magic   = struct.unpack_from("<I", data, base)[0]
+        is64       = sl_magic == 0xFEEDFACF
+        hdr_size   = 32 if is64 else 28
+        ncmds      = struct.unpack_from("<I", data, base + 16)[0]
+        sizeofcmds = struct.unpack_from("<I", data, base + 20)[0]
+
+        # Calculate free space
+        offset   = base + hdr_size
+        cmds_end = base + hdr_size + sizeofcmds
+        text_section_fileoff: int | None = None
+
+        for _ in range(ncmds):
+            if offset >= cmds_end: break
+            cmd     = struct.unpack_from("<I", data, offset)[0]
+            cmdsize = struct.unpack_from("<I", data, offset + 4)[0]
+            if cmdsize == 0: break
+
+            if cmd in (LC_LOAD_DYLIB, LC_LOAD_WEAK):
+                name_off = struct.unpack_from("<I", data, offset + 8)[0]
+                ns = offset + name_off
+                if 0 in data[ns: offset + cmdsize]:
+                    ne = data.index(0, ns)
+                else:
+                    ne = offset + cmdsize
+                if data[ns:ne].decode("utf-8", "replace") == dylib_path_str:
+                    return  # already injected
+
+            if cmd in (LC_SEGMENT, LC_SEGMENT_64):
+                seg_name = data[offset + 8: offset + 24].rstrip(b"\x00").decode("utf-8", "replace")
+                if seg_name == "__TEXT":
+                    # Walk sections to find __text section file offset
+                    if is64:
+                        nsects     = struct.unpack_from("<I", data, offset + 64)[0]
+                        sect_start = offset + 72   # sizeof(segment_command_64)
+                        sect_size  = 80            # sizeof(section_64)
+                        sect_off_field = 48        # ->offset field in section_64
+                    else:
+                        nsects     = struct.unpack_from("<I", data, offset + 52)[0]
+                        sect_start = offset + 56   # sizeof(segment_command)
+                        sect_size  = 68            # sizeof(section)
+                        sect_off_field = 40        # ->offset field in section
+                    for j in range(nsects):
+                        s = sect_start + j * sect_size
+                        sname = data[s:s + 16].rstrip(b"\x00").decode("utf-8", "replace")
+                        if sname == "__text":
+                            text_section_fileoff = struct.unpack_from("<I", data, s + sect_off_field)[0]
+                            break
+
+            offset += cmdsize
+
+        if text_section_fileoff is not None and text_section_fileoff > (sizeofcmds + hdr_size):
+            free_space = text_section_fileoff - sizeofcmds - hdr_size
+        else:
+            free_space = 0  # allow injection anyway if no __text section found
+
+        path_encoded = dylib_path_str.encode("utf-8")
+        path_len     = len(path_encoded)
+        padding      = 8 - (path_len % 8)   # 1..8 bytes
+        new_cmdsize  = DYLIB_CMD_SIZE + path_len + padding
+
+        if free_space > 0 and free_space < new_cmdsize:
+            print(f"{RED}[-] No free space for LC ({dylib_path_str}): need {new_cmdsize}, have {free_space}{RESET}")
+            return
+
+        cmd_bytes  = struct.pack("<IIII", LC_LOAD_WEAK, new_cmdsize, DYLIB_CMD_SIZE, 2)
+        cmd_bytes += struct.pack("<II", 0, 0)          # current_version, compat_version
+        cmd_bytes += path_encoded
+        cmd_bytes += b"\x00" * padding
+
+        assert len(cmd_bytes) == new_cmdsize, f"cmd_bytes length mismatch: {len(cmd_bytes)} != {new_cmdsize}"
+
+        # Write into the padding area
+        insert_at = base + hdr_size + sizeofcmds
+        data[insert_at: insert_at + new_cmdsize] = cmd_bytes
+
+        # Update header
+        struct.pack_into("<I", data, base + 16, ncmds + 1)
+        struct.pack_into("<I", data, base + 20, sizeofcmds + new_cmdsize)
+
+    def _change_macho_dylib_path(self, filepath: str, old_path: str, new_path: str) -> None:
+        """Pure Python equivalent to install_name_tool -change.
+        Because path lengths usually differ, this strictly works if new_path <= old_path or if there is enough padding.
+        """
+        old_b = old_path.encode('utf-8')
+        new_b = new_path.encode('utf-8')
+        if len(new_b) > len(old_b):
+            # We strictly need padding, but in our case @rpath/... is shorter than /Library/..., so we are safe.
             pass
-        return {}
 
-    def _write_hash_json(self, ipa_path: str, dylib_hashes: dict[str, str]) -> None:
-        """Inject / update hash.json in the IPA zip (rewrites the archive)."""
-        payload = json.dumps(
-            {"_tool": self._TOOL_META, "dylibs": dylib_hashes},
-            indent=2,
-        ).encode("utf-8")
+        with open(filepath, "rb") as f:
+            data = bytearray(f.read())
 
-        tmp = ipa_path + ".hjson_tmp"
-        with zipfile.ZipFile(ipa_path, "r") as zin:
-            with zipfile.ZipFile(tmp, "w", zipfile.ZIP_DEFLATED) as zout:
-                for item in zin.infolist():
-                    if item.filename == self._HASH_JSON_NAME:
-                        continue   # replaced below
-                    zout.writestr(item, zin.read(item.filename))
-                zout.writestr(self._HASH_JSON_NAME, payload)
-        os.replace(tmp, ipa_path)
-        print(f"{WHITE}[*] hash.json updated in IPA{RESET}")
+        changed = False
 
-    def _remove_dylibs_from_ipa(self, ipa_path: str, names: list[str]) -> str:
-        """
-        Return path to a temp IPA that is a copy of ipa_path with all zip
-        entries whose basename matches any name in `names` removed.
-        Used to cleanly replace old dylib versions before calling zsign.
-        """
-        tmp_path = os.path.join(self._ensure_temp(), "_cleaned.ipa")
-        names_set = set(names)
-        removed = 0
-        with zipfile.ZipFile(ipa_path, "r") as zin:
-            with zipfile.ZipFile(tmp_path, "w", zipfile.ZIP_DEFLATED) as zout:
-                for item in zin.infolist():
-                    if os.path.basename(item.filename) in names_set and \
-                            item.filename.endswith(".dylib"):
-                        print(f"{RED}[-] Removed from IPA: {item.filename}{RESET}")
-                        removed += 1
-                        continue
-                    zout.writestr(item, zin.read(item.filename))
-        print(f"{GREEN}[+] Removed {removed} old dylib(s) from IPA copy{RESET}")
-        return tmp_path
+        def patch_slice(base: int):
+            nonlocal changed
+            magic = struct.unpack_from("<I", data, base)[0]
+            is64  = magic == 0xFEEDFACF
+            hdr   = 32 if is64 else 28
+            ncmds = struct.unpack_from("<I", data, base + 16)[0]
+            szcmds = struct.unpack_from("<I", data, base + 20)[0]
+
+            LC_LOAD_DYLIB = 0x0c
+            LC_LOAD_WEAK  = 0x80000018
+
+            off = base + hdr
+            for _ in range(ncmds):
+                if off >= base + hdr + szcmds: break
+                cmd = struct.unpack_from("<I", data, off)[0]
+                cmdsize = struct.unpack_from("<I", data, off + 4)[0]
+                if cmdsize == 0: break
+
+                if cmd in (LC_LOAD_DYLIB, LC_LOAD_WEAK):
+                    name_off = struct.unpack_from("<I", data, off + 8)[0]
+                    ns = off + name_off
+                    ne = data.index(0, ns) if 0 in data[ns:off + cmdsize] else off + cmdsize
+                    p = data[ns:ne]
+
+                    if p == old_b:
+                        if len(new_b) <= len(old_b):
+                            # In-place overwrite with null padding
+                            data[ns:ns + len(new_b)] = new_b
+                            data[ns + len(new_b):ne] = b"\x00" * (len(old_b) - len(new_b))
+                            changed = True
+                        else:
+                            # Not implemented: shifting string table. Fortunately paths are shorter.
+                            pass
+
+                off += cmdsize
+
+        magic = struct.unpack_from("<I", data, 0)[0]
+        if magic in (0xCAFEBABE, 0xBEBAFECA):
+            nfat = struct.unpack_from(">I", data, 4)[0]
+            for i in range(nfat):
+                off = struct.unpack_from(">I", data, 8 + i * 20 + 8)[0]
+                patch_slice(off)
+        elif magic in (0xFEEDFACE, 0xFEEDFACF):
+            patch_slice(0)
+
+        if changed:
+            with open(filepath, "wb") as f:
+                f.write(data)
+
 
     def _add_tweaks(self) -> None:
         print(SEP)
@@ -739,125 +842,164 @@ class IPAEditor:
             except (ValueError, IndexError):
                 sys.exit("[-] Invalid selection.")
 
-        # ── Duplicate check ──────────────────────────────────────────────────
-        print(SEP)
-        existing_hashes = self._read_hash_json(self.args.i)  # {name: pre-sign hash}
-        with zipfile.ZipFile(self.args.i, "r") as _zf:
-            has_hash_json = self._HASH_JSON_NAME in _zf.namelist()
-
-        existed: list[str]   = []   # same name + same hash  → skip
-        to_inject: list[str] = []   # new or updated          → inject
-        to_remove: list[str] = []   # old dylibs to delete first (-D flag)
-
-        if has_hash_json:
-            # ── Path A: hash.json present ─────────────────────────────────
-            print(f"{WHITE}[*] Checking for already-injected tweaks via hash.json...{RESET}")
-            for path in chosen:
-                name     = os.path.basename(path)
-                src_hash = self._sha256(path)
-                if name in existing_hashes and existing_hashes[name] == src_hash:
-                    existed.append(name)
-                else:
-                    if name in existing_hashes:
-                        to_remove.append(name)
-                    to_inject.append(path)
-        else:
-            # ── Path B: no hash.json → scan zip entries for name conflicts ─
-            print(f"{WHITE}[*] No hash.json found — scanning IPA for existing dylib names...{RESET}")
-            with zipfile.ZipFile(self.args.i, "r") as zf:
-                ipa_dylib_names = {
-                    os.path.basename(e) for e in zf.namelist()
-                    if e.endswith(".dylib")
-                }
-            for path in chosen:
-                name = os.path.basename(path)
-                if name in ipa_dylib_names:
-                    print(f"{WHITE}[!] Conflict: {name} already in IPA — will remove & replace{RESET}")
-                    to_remove.append(name)
-                to_inject.append(path)
-
-        # ── Print Existed Tweak list ────────────────────────────────────────
-        if existed:
-            print(f"{WHITE}[*] Existed Tweaks (same hash — skipped):{RESET}")
-            for name in existed:
-                print(f"  {WHITE}•{RESET} {name}  {WHITE}[SHA256: {existing_hashes[name][:16]}...]{RESET}")
-        else:
-            print(f"{GREEN}[*] No exact duplicates found.{RESET}")
-
-        if not to_inject:
-            print(f"{WHITE}[*] All selected tweaks are already present. Nothing to inject.{RESET}")
-            return
-
         print(SEP)
         print(f"{WHITE}[*] Tweaks to inject:{RESET}")
-        for path in to_inject:
-            name  = os.path.basename(path)
-            label = f"{WHITE}[replacing old version]{RESET}" if name in to_remove else ""
-            print(f"  {GREEN}+{RESET} {name}  {label}")
+        for tp in chosen:
+            print(f"  {GREEN}+{RESET} {os.path.basename(tp)}")
         print(SEP)
 
         ans     = input("[?] Sign the output iPA? [Y/n]: ").lower().strip()
         do_sign = ans in ("y", "yes", "")
 
-        zsign  = self._resolve_zsign()
-        # If there are conflicting dylibs, strip them out of the IPA first
-        # (don't use zsign -D; that flag isn't in all builds)
-        if to_remove:
-            print(SEP)
-            print(f"{WHITE}[*] Removing old dylib version(s) from IPA...{RESET}")
-            ipa_in = self._remove_dylibs_from_ipa(self.args.i, to_remove)
-        else:
-            ipa_in = self.args.i
+        zsign = self._resolve_zsign()
+        temp  = self._ensure_temp()
 
-        dylib_flags = " ".join(f'-l "{t}"' for t in to_inject)
+        unsigned_path = os.path.join(temp, "_tweaked_unsigned.ipa")
+        out_path = self.args.o if self.args.o else self._get_auto_out_path(
+            "tweaked_signed" if do_sign else "tweaked_unsigned"
+        )
+        if not out_path.endswith(".ipa"):
+            out_path += ".ipa"
 
-        # Pre-compute hashes NOW (before zsign mutates anything)
-        new_hashes = dict(existing_hashes)
-        for path in to_inject:
-            new_hashes[os.path.basename(path)] = self._sha256(path)
+        # Read IPA metadata
+        app_folder_name: str | None = None
+        exe_name: str | None = None
+        with zipfile.ZipFile(self.args.i, "r") as zf:
+            for entry in zf.namelist():
+                parts = entry.replace("\\", "/").split("/")
+                if (len(parts) == 3 and parts[0] == "Payload"
+                        and parts[1].endswith(".app") and parts[2] == "Info.plist"):
+                    try:
+                        pl = plistlib.loads(zf.read(entry))
+                        exe_name = pl.get("CFBundleExecutable")
+                        app_folder_name = parts[1]
+                    except Exception:
+                        pass
+                    break
 
+        if not app_folder_name or not exe_name:
+            sys.exit(f"{RED}[-] Could not locate .app or executable inside IPA.{RESET}")
+
+        fw_prefix  = f"Payload/{app_folder_name}/Frameworks/"
+        exe_entry  = f"Payload/{app_folder_name}/{exe_name}"
+
+        extra_dylibs: list[str] = []
+        needs_substrate = False
+        
+        for t in chosen:
+            if t.endswith(".deb"):
+                print(f"{WHITE}[*] Extracting tweak deb: {os.path.basename(t)}{RESET}")
+                tname = os.path.basename(t).replace(".deb", "")
+                tout = os.path.join(temp, f"deb_{tname}")
+                os.makedirs(tout, exist_ok=True)
+                DebExtractor.extract(t, tout)
+                ms_dir = os.path.join(tout, "Library", "MobileSubstrate", "DynamicLibraries")
+                if os.path.isdir(ms_dir):
+                    for f in os.listdir(ms_dir):
+                        if f.endswith(".dylib"):
+                            dp = os.path.join(ms_dir, f)
+                            extra_dylibs.append(dp)
+                            if self._dylib_needs_substrate(dp):
+                                needs_substrate = True
+            elif t.endswith(".dylib"):
+                extra_dylibs.append(t)
+                if self._dylib_needs_substrate(t):
+                    needs_substrate = True
+
+        extra_fw_files: list[tuple[str, str]] = [] # (local_path, zip_path)
+        
+        if needs_substrate:
+            print(f"{WHITE}[*] Tweak requires CydiaSubstrate, bundling ElleKit{RESET}")
+            ellekit_deb = os.path.join(self.script_dir, "resources", "ellekit.deb")
+            if not os.path.isfile(ellekit_deb):
+                print(f"{RED}[!] Missing ellekit.deb in resources/ folder!{RESET}")
+                ans2 = input("[?] Continue without substrate? [y/N]: ").lower().strip()
+                if ans2 not in ("y", "yes"):
+                    return
+            else:
+                ek_out = os.path.join(temp, "ellekit_extract")
+                os.makedirs(ek_out, exist_ok=True)
+                DebExtractor.extract(ellekit_deb, ek_out)
+                
+                cs_fw = os.path.join(ek_out, "Library", "Frameworks", "CydiaSubstrate.framework")
+                if os.path.isdir(cs_fw):
+                    for root, dirs, files in os.walk(cs_fw):
+                        for f in files:
+                            lp = os.path.join(root, f)
+                            rel = os.path.relpath(lp, cs_fw).replace("\\", "/")
+                            zp = fw_prefix + "CydiaSubstrate.framework/" + rel
+                            extra_fw_files.append((lp, zp))
+                    print(f"{GREEN}[+] Bundled CydiaSubstrate.framework from ElleKit{RESET}")
+                else:
+                    print(f"{RED}[!] CydiaSubstrate.framework not found in ellekit.deb{RESET}")
+
+        # Pre-patch Tweaks: Fix hardcoded jailbreak CydiaSubstrate paths before packing
+        print(f"{WHITE}[*] Fixing hardcoded paths in tweaks{RESET}")
+        for d in extra_dylibs:
+            if d.endswith(".dylib"):
+                self._change_macho_dylib_path(d, 
+                    "/Library/Frameworks/CydiaSubstrate.framework/CydiaSubstrate", 
+                    "@rpath/CydiaSubstrate.framework/CydiaSubstrate")
+                self._change_macho_dylib_path(d,
+                    "/Library/MobileSubstrate/DynamicLibraries/CydiaSubstrate.framework/CydiaSubstrate",
+                    "@rpath/CydiaSubstrate.framework/CydiaSubstrate")
+
+        # Build new IPA with patched binary + dylibs in Frameworks/
+        print(f"{WHITE}[*] Patching binary and building temp IPA{RESET}")
+        with zipfile.ZipFile(self.args.i, "r") as zin:
+            with zipfile.ZipFile(unsigned_path, "w", zipfile.ZIP_DEFLATED) as zout:
+                for item in zin.infolist():
+                    raw        = zin.read(item.filename)
+                    normalized = item.filename.replace("\\", "/")
+
+                    if normalized == exe_entry:
+                        # Inject LC_LOAD_WEAK_DYLIB for every new dylib
+                        ba = bytearray(raw)
+                        for d in extra_dylibs:
+                            lc_path = f"@executable_path/Frameworks/{os.path.basename(d)}"
+                            self._inject_lc_load_weak_dylib(ba, lc_path)
+                            print(f"  {WHITE}→{RESET} Injected load cmd: {lc_path}")
+                        raw = bytes(ba)
+
+                    zout.writestr(item, raw)
+
+                # Append dylib files into Frameworks/
+                for d in extra_dylibs:
+                    name = os.path.basename(d)
+                    with open(d, "rb") as f:
+                        zout.writestr(fw_prefix + name, f.read())
+                    print(f"  {GREEN}+{RESET} {fw_prefix}{name}")
+                    
+                # Append framework files
+                for lp, zp in extra_fw_files:
+                    with open(lp, "rb") as f:
+                        zout.writestr(zp, f.read())
+                if extra_fw_files:
+                    print(f"  {GREEN}+{RESET} {fw_prefix}CydiaSubstrate.framework")
+
+        print(SEP)
         if do_sign:
-            print(SEP)
-            print(f"{WHITE}[*] Signing + injecting tweaks{RESET}")
+            print(f"{WHITE}[*] Signing injected iPA{RESET}")
             p12_path, mb_path = self._resolve_certificate()
             if not p12_path or not mb_path:
-                p12_path = input("[?] .p12 path: ").strip(' "\'')
-                mb_path  = input("[?] .mobileprovision path: ").strip(' "\'')
+                p12_path = input("[?] .p12 path: ").strip(" \"'")
+                mb_path  = input("[?] .mobileprovision path: ").strip(" \"'")
             cert_pw = input("[?] Certificate password: ")
             print(SEP)
-
-            out_path = self.args.o if self.args.o else self._get_auto_out_path("tweaked_signed")
-            if not out_path.endswith(".ipa"):
-                out_path += ".ipa"
-
             cmd = (
                 f'"{zsign}" -k "{p12_path}" -m "{mb_path}" -p "{cert_pw}"'
-                f' {dylib_flags} -o "{out_path}" -z 9 "{ipa_in}"'
+                f' -o "{out_path}" -z 9 "{unsigned_path}"'
             )
             subprocess.run(cmd, shell=True)
             if os.path.isfile(out_path):
-                self._write_hash_json(out_path, new_hashes)
                 print(f"{GREEN}[+] Tweaked & signed: {out_path}{RESET}")
             else:
-                print(f"{RED}[-] zsign failed — output IPA not found{RESET}")
+                print(f"{RED}[-] zsign signing failed — output IPA not found{RESET}")
         else:
-            print(SEP)
-            print(f"{WHITE}[*] Injecting tweaks (ad-hoc / unsigned){RESET}")
+            shutil.copy2(unsigned_path, out_path)
+            print(f"{GREEN}[+] Tweaked (unsigned): {out_path}{RESET}")
 
-            out_path = self.args.o if self.args.o else self._get_auto_out_path("tweaked_unsigned")
-            if not out_path.endswith(".ipa"):
-                out_path += ".ipa"
 
-            cmd = (
-                f'"{zsign}" -a'
-                f' {dylib_flags} -o "{out_path}" -z 9 "{ipa_in}"'
-            )
-            subprocess.run(cmd, shell=True)
-            if os.path.isfile(out_path):
-                self._write_hash_json(out_path, new_hashes)
-                print(f"{GREEN}[+] Tweaked (unsigned): {out_path}{RESET}")
-            else:
-                print(f"{RED}[-] zsign failed — output IPA not found{RESET}")
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -980,7 +1122,7 @@ if __name__ == "__main__":
         for attr in ['i', 'o', 'p']:
             val = getattr(ns, attr, None)
             if isinstance(val, str):
-                setattr(ns, attr, val.strip(' "\''))
+                setattr(ns, attr, val.strip(' "\'').rstrip('/\\'))
                 
         IPAEditor(ns).run()
     except KeyboardInterrupt:

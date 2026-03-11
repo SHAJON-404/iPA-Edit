@@ -3,7 +3,7 @@
   <p align="center">
     A powerful cross-platform tool for modifying, signing, and converting iOS <code>.ipa</code> files.
     <br /><br />
-    <img src="https://img.shields.io/badge/version-v1.1-6b63ff?style=flat-square" alt="Version" />
+    <img src="https://img.shields.io/badge/version-v1.2-6b63ff?style=flat-square" alt="Version" />
     <img src="https://img.shields.io/badge/python-3.10+-blue?style=flat-square&logo=python&logoColor=white" alt="Python" />
     <img src="https://img.shields.io/badge/license-GPLv3-green?style=flat-square" alt="License" />
     <img src="https://img.shields.io/badge/platform-Windows%20%7C%20macOS%20%7C%20Linux-lightgrey?style=flat-square" alt="Platform" />
@@ -21,7 +21,7 @@
 ## ✨ Features
 
 - **Edit iPA metadata** — change bundle ID, app name, version, and icon
-- **Inject tweaks** — add `.dylib` tweaks from the `tweaks/` folder with smart duplicate detection via `hash.json`
+- **Inject tweaks** — add `.dylib` and `.deb` tweaks from the `tweaks/` folder, with automatic CydiaSubstrate bundling (via ElleKit) and `@rpath` patching
 - **Remove injected dylibs** — delete tweaks and patch the Mach-O binary to strip load commands
 - **Code signing** — sign single or batch iPAs using `zsign` with auto-detected certificates
 - **Dylib export** — extract `.dylib` and `.framework` files to `tweaks_extracted/`
@@ -38,8 +38,9 @@ iPA-Edit/
 ├── certificate/            # place signing certificates here
 │   ├── *.p12
 │   └── *.mobileprovision
-├── tweaks/                 # place .dylib tweaks here for injection
+├── tweaks/                 # place .dylib or .deb tweaks here for injection
 ├── tweaks_extracted/       # exported dylibs land here (auto-created)
+├── resources/              # place ellekit.deb here for CydiaSubstrate fallback
 ├── zsign/                  # bundled zsign binaries (auto-detected)
 │   ├── windows/zsign.exe
 │   ├── mac/zsign
@@ -70,7 +71,7 @@ pip install -r requirements.txt
 
 ### Tweak Setup
 
-Place any `.dylib` tweak files in the `tweaks/` folder. They will appear in the numbered list when using option **8**.
+Place any `.dylib` or `.deb` tweak files in the `tweaks/` folder. They will appear in the numbered list when using option **8**.
 
 ## 🖥️ Platform Support
 
@@ -151,26 +152,22 @@ python ipa-edit.py -i tweak.deb -o converted.ipa -e
 
 ## 💉 Tweak Injection
 
-Place `.dylib` files in the `tweaks/` folder, then select option **8** (or use `-tw`):
+Place `.dylib` or `.deb` files in the `tweaks/` folder, then select option **8** (or use `-tw`):
 
 ```
 [*] Available tweaks:
   1: AboutME.dylib  (518 KB)
   2: blatantsPatch.dylib  (103 KB)
+  3: some_tweak.deb  (1.2 MB)
 
 [?] use , for multiple | 'all' for every tweak | 'exit' to cancel
-[?] Tweak number(s) to inject: 1,2
+[?] Tweak number(s) to inject: 1,2,3
 ```
 
-**Smart duplicate detection** — each output IPA contains a `hash.json` that records the pre-sign SHA-256 of every injected tweak. On subsequent runs:
-
-| Situation | Result |
-|:--|:--|
-| Same dylib name + same hash | ⏩ Skipped (already injected) |
-| Same dylib name + different hash | 🔄 Old version removed, new one injected |
-| New dylib name | ✅ Injected |
-
-> If no `hash.json` is present (e.g. third-party tweaked IPA), conflicting dylibs are removed from the zip in pure Python before injection — no zsign `-D` flag required.
+**Advanced Injection System:**
+- **.deb Support**: Automatically unzips `.deb` files and locates the correct `MobileSubstrate` dynamic libraries to inject.
+- **Auto-Substrate Bundling**: If any tweak requires `CydiaSubstrate`, the script will automatically extract `ellekit.deb` from the `resources/` folder and bundle `CydiaSubstrate.framework` natively inside the app!
+- **Path Patching**: Fixes hardcoded jailbreak paths (e.g. `/Library/Frameworks/...`) to standard `@rpath/` iOS paths before injection, effectively eliminating kernel AMFI/sandbox crash issues on jailed devices.
 
 ## 🔐 Certificate & Zsign Auto-Detection
 
