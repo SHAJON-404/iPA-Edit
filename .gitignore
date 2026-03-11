@@ -211,7 +211,6 @@ __marimo__/
 Signed/
 Unsigned/
 *.ipa
-*.deb
 certificate/*.p12
 certificate/*.mobileprovision
 tweaks_extracted/
