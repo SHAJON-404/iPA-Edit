@@ -103,8 +103,11 @@ def add_tweaks(editor) -> None:
     # Read IPA metadata
     app_folder_name: str | None = None
     exe_name: str | None = None
+    existing_files = set()
     with zipfile.ZipFile(source_ipa, "r") as zf:
-        for entry in zf.namelist():
+        namelist = zf.namelist()
+        existing_files = set(e.replace("\\", "/") for e in namelist)
+        for entry in namelist:
             parts = entry.replace("\\", "/").split("/")
             if (len(parts) == 3 and parts[0] == "Payload"
                     and parts[1].endswith(".app") and parts[2] == "Info.plist"):
@@ -137,21 +140,39 @@ def add_tweaks(editor) -> None:
             if os.path.isdir(ms_dir):
                 for f in os.listdir(ms_dir):
                     if f.endswith(".dylib"):
+                        zp = fw_prefix + f
+                        if zp in existing_files:
+                            print(f"{GREEN}[*]{RESET} {f} already exists in iPA, skipping.")
+                            continue
                         dp = os.path.join(ms_dir, f)
                         extra_dylibs.append(dp)
                         if dylib_needs_substrate(dp):
                             needs_substrate = True
         elif t.endswith(".dylib"):
+            f = os.path.basename(t)
+            zp = fw_prefix + f
+            if zp in existing_files:
+                print(f"{GREEN}[*]{RESET} {f} already exists in iPA, skipping.")
+                continue
             extra_dylibs.append(t)
             if dylib_needs_substrate(t):
                 needs_substrate = True
         elif t.endswith(".framework"):
+            f = os.path.basename(t)
+            zp_prefix = fw_prefix + f + "/"
+            if any(ef.startswith(zp_prefix) for ef in existing_files) or (fw_prefix + f) in existing_files:
+                print(f"{GREEN}[*]{RESET} {f} already exists in iPA, skipping.")
+                continue
             extra_fws.append(t)
 
     extra_fw_files: list[tuple[str, str]] = []   # (local_path, zip_entry)
 
     if needs_substrate:
-        print(f"{WHITE}[*] Tweak requires CydiaSubstrate, bundling ElleKit{RESET}")
+        cs_prefix = fw_prefix + "CydiaSubstrate.framework/"
+        if any(ef.startswith(cs_prefix) for ef in existing_files) or (fw_prefix + "CydiaSubstrate.framework") in existing_files:
+            print(f"{GREEN}[*]{RESET} CydiaSubstrate.framework already exists in iPA, skipping bundle.")
+        else:
+            print(f"{WHITE}[*] Tweak requires CydiaSubstrate, bundling ElleKit{RESET}")
         ellekit_deb = os.path.join(editor.script_dir, "tweaks", "ellekit.deb")
         if not os.path.isfile(ellekit_deb):
             print(f"{RED}[!] Missing ellekit.deb in tweaks/ folder!{RESET}")
@@ -189,10 +210,14 @@ def add_tweaks(editor) -> None:
     print(f"{WHITE}[*] Patching binary and building temp IPA{RESET}")
     with zipfile.ZipFile(source_ipa, "r") as zin:
         with zipfile.ZipFile(unsigned_path, "w", zipfile.ZIP_DEFLATED) as zout:
+            written_entries = set()
             for item in zin.infolist():
                 raw        = zin.read(item.filename)
                 normalized = item.filename.replace("\\", "/")
 
+                if normalized in written_entries:
+                    continue
+                
                 if normalized == exe_entry:
                     ba = bytearray(raw)
                     for d in extra_dylibs:
@@ -202,12 +227,16 @@ def add_tweaks(editor) -> None:
                     raw = bytes(ba)
 
                 zout.writestr(item, raw)
+                written_entries.add(normalized)
 
             for d in extra_dylibs:
                 name = os.path.basename(d)
-                with open(d, "rb") as f:
-                    zout.writestr(fw_prefix + name, f.read())
-                print(f"  {GREEN}+{RESET} {fw_prefix}{name}")
+                zp = fw_prefix + name
+                if zp not in written_entries:
+                    with open(d, "rb") as f:
+                        zout.writestr(zp, f.read())
+                    written_entries.add(zp)
+                    print(f"  {GREEN}+{RESET} {zp}")
 
             for fw in extra_fws:
                 fw_name = os.path.basename(fw)
@@ -217,16 +246,23 @@ def add_tweaks(editor) -> None:
                             lp  = os.path.join(root, f)
                             rel = os.path.relpath(lp, fw).replace("\\", "/")
                             zp  = fw_prefix + fw_name + "/" + rel
-                            with open(lp, "rb") as fin:
-                                zout.writestr(zp, fin.read())
+                            if zp not in written_entries:
+                                with open(lp, "rb") as fin:
+                                    zout.writestr(zp, fin.read())
+                                written_entries.add(zp)
                 else:
-                    with open(fw, "rb") as fin:
-                        zout.writestr(fw_prefix + fw_name, fin.read())
+                    zp = fw_prefix + fw_name
+                    if zp not in written_entries:
+                        with open(fw, "rb") as fin:
+                            zout.writestr(zp, fin.read())
+                        written_entries.add(zp)
                 print(f"  {GREEN}+{RESET} {fw_prefix}{fw_name}")
 
             for lp, zp in extra_fw_files:
-                with open(lp, "rb") as f:
-                    zout.writestr(zp, f.read())
+                if zp not in written_entries:
+                    with open(lp, "rb") as f:
+                        zout.writestr(zp, f.read())
+                    written_entries.add(zp)
             if extra_fw_files:
                 print(f"  {GREEN}+{RESET} {fw_prefix}CydiaSubstrate.framework")
 
